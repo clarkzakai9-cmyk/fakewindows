@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Chunked ZIP Library</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+  :root{--bg:#0f0f0f;--card:#1e1e1e;--accent:#ff4b2b;--muted:#999}
+  body{font-family:Segoe UI,Roboto,system-ui;background:var(--bg);color:#fff;margin:0;padding:2rem}
+  h1{margin:0 0 1rem 0}
+  .controls{display:flex;gap:.75rem;flex-wrap:wrap;margin-bottom:1rem}
+  input[type=file]{padding:.5rem;border-radius:8px;background:#111;color:#fff;border:1px solid #222}
+  button{background:var(--accent);color:#fff;border:none;padding:.5rem .9rem;border-radius:8px;cursor:pointer;font-weight:600}
+  #gallery{max-width:1200px;margin-top:1rem}
+  .card{background:var(--card);padding:1rem;border-radius:12px;margin-bottom:.75rem}
+  .meta{font-size:.9rem;color:var(--muted);display:flex;justify-content:space-between;align-items:center;gap:.5rem}
+  .small-btn{background:#333;padding:.35rem .6rem;border-radius:8px;font-size:.85rem;color:#fff;border:none;cursor:pointer;margin-left:.5rem}
+  .danger{background:#8b0000}
+  .hash{font-family:monospace;color:#ccc;margin-top:.5rem;word-break:break-all}
+</style>
+</head>
+<body>
+  <h1>Chunked ZIP Library</h1>
+
+  <div class="controls">
+    <input id="fileInput" type="file" accept=".zip,application/zip" />
+    <button id="clearAll">Clear All Stored ZIPs</button>
+  </div>
+
+  <div id="gallery" aria-live="polite"></div>
+
+<script>
+/* CONFIG */
+const CHUNK_SIZE = 64 * 1024 * 1024; // 64 MB
+const DB_NAME = "chunkedZipDB";
+const DB_VERSION = 1;
+const FILE_STORE = "files";
+const CHUNK_STORE = "chunks";
+
+let db;
+
+/* IndexedDB helpers */
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = e => {
+      const d = e.target.result;
+      if (!d.objectStoreNames.contains(FILE_STORE)) d.createObjectStore(FILE_STORE, { keyPath: "id", autoIncrement: true });
+      if (!d.objectStoreNames.contains(CHUNK_STORE)) {
+        const cs = d.createObjectStore(CHUNK_STORE, { keyPath: "id", autoIncrement: true });
+        cs.createIndex("fileId_idx", "fileId", { unique: false });
+        cs.createIndex("fileId_index", ["fileId", "index"], { unique: true });
+      }
+    };
+    req.onsuccess = e => { db = e.target.result; resolve(); };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function addFileMeta(meta) {
+  return new Promise((res, rej) => {
+    const tx = db.transaction(FILE_STORE, "readwrite");
+    const store = tx.objectStore(FILE_STORE);
+    const r = store.add(meta);
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+
+function addChunkRecord(chunkRec) {
+  return new Promise((res, rej) => {
+    const tx = db.transaction(CHUNK_STORE, "readwrite");
+    const store = tx.objectStore(CHUNK_STORE);
+    const r = store.add(chunkRec);
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+
+function getAllFiles() {
+  return new Promise((res, rej) => {
+    const tx = db.transaction(FILE_STORE, "readonly");
+    const store = tx.objectStore(FILE_STORE);
+    const r = store.getAll();
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+
+function getChunksForFile(fileId) {
+  return new Promise((res, rej) => {
+    const tx = db.transaction(CHUNK_STORE, "readonly");
+    const store = tx.objectStore(CHUNK_STORE);
+    const idx = store.index("fileId_index");
+    const range = IDBKeyRange.bound([fileId, 0], [fileId, Number.MAX_SAFE_INTEGER]);
+    const req = idx.openCursor(range, "next");
+    const chunks = [];
+    req.onsuccess = e => {
+      const cur = e.target.result;
+      if (!cur) { res(chunks); return; }
+      chunks.push(cur.value);
+      cur.continue();
+    };
+    req.onerror = () => rej(req.error);
+  });
+}
+
+function deleteFileAndChunks(fileId) {
+  return new Promise((res, rej) => {
+    const tx = db.transaction([FILE_STORE, CHUNK_STORE], "readwrite");
+    tx.objectStore(FILE_STORE).delete(fileId);
+    const idx = tx.objectStore(CHUNK_STORE).index("fileId_idx");
+    const range = IDBKeyRange.only(fileId);
+    const req = idx.openCursor(range);
+    req.onsuccess = e => {
+      const cur = e.target.result;
+      if (!cur) return;
+      cur.delete();
+      cur.continue();
+    };
+    tx.oncomplete = () => res();
+    tx.onerror = () => rej(tx.error);
+  });
+}
+
+function clearAllData() {
+  return new Promise((res, rej) => {
+    const tx = db.transaction([FILE_STORE, CHUNK_STORE], "readwrite");
+    tx.objectStore(FILE_STORE).clear();
+    tx.objectStore(CHUNK_STORE).clear();
+    tx.oncomplete = () => res();
+    tx.onerror = () => rej(tx.error);
+  });
+}
+
+function updateFileChunkCount(fileId, count) {
+  return new Promise((res, rej) => {
+    const tx = db.transaction(FILE_STORE, "readwrite");
+    const store = tx.objectStore(FILE_STORE);
+    const r = store.get(fileId);
+    r.onsuccess = e => {
+      const rec = e.target.result;
+      if (!rec) return res();
+      rec.chunkCount = count;
+      const u = store.put(rec);
+      u.onsuccess = () => res();
+      u.onerror = () => rej(u.error);
+    };
+    r.onerror = () => rej(r.error);
+  });
+}
+
+/* UI wiring */
+const fileInput = document.getElementById("fileInput");
+const gallery = document.getElementById("gallery");
+const clearAllBtn = document.getElementById("clearAll");
+
+clearAllBtn.onclick = async () => {
+  if (!confirm("Remove all stored ZIP files?")) return;
+  await clearAllData();
+  await refreshGallery();
+};
+
+fileInput.onchange = () => handleFiles(fileInput.files);
+
+/* Quota helper */
+async function hasEnoughQuota(fileSize) {
+  if (!navigator.storage || !navigator.storage.estimate) return true;
+  try {
+    const { usage = 0, quota = 0 } = await navigator.storage.estimate();
+    const free = Math.max(0, quota - usage);
+    return free > fileSize * 1.1;
+  } catch (err) {
+    console.warn('quota estimate failed', err);
+    return true;
+  }
+}
+
+/* SHA-256 helper */
+async function sha256Hex(blob) {
+  const buffer = await blob.arrayBuffer();
+  const hash = await crypto.subtle.digest('SHA-256', buffer);
+  const hex = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2,'0')).join('');
+  return hex;
+}
+
+/* Chunked upload */
+async function handleFiles(fileList) {
+  if (!fileList || fileList.length === 0) return;
+  for (const file of Array.from(fileList)) {
+    const total = file.size;
+    const expectedChunks = Math.ceil(total / CHUNK_SIZE);
+
+    const okQuota = await hasEnoughQuota(total);
+    if (!okQuota) {
+      alert('Not enough browser storage quota to store this file. Try a smaller file or free up space.');
+      continue;
+    }
+
+    const meta = { name: file.name, size: total, type: file.type || 'application/zip', createdAt: Date.now(), chunkCount: 0, sha256: null };
+    let fileId;
+    try {
+      fileId = await addFileMeta(meta);
+    } catch (err) {
+      console.error('Failed to create file meta', err);
+      alert('Failed to create file record. See console.');
+      continue;
+    }
+
+    const progressCard = document.createElement('div');
+    progressCard.className = 'card';
+    progressCard.innerHTML = `<h3>Storing: ${file.name}</h3>
+      <div class="meta"><span>0 / ${expectedChunks} chunks</span><span id="pct">0%</span></div>`;
+    gallery.prepend(progressCard);
+    const progressText = progressCard.querySelector('.meta span:first-child');
+    const pctText = progressCard.querySelector('#pct');
+
+    let written = 0;
+    try {
+      for (let index = 0; index < expectedChunks; index++) {
+        const start = index * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, total);
+        const slice = file.slice(start, end);
+        await addChunkRecord({ fileId, index, blob: slice });
+        written++;
+        progressText.textContent = `${written} / ${expectedChunks} chunks`;
+        pctText.textContent = Math.round((written/expectedChunks)*100) + '%';
+        await new Promise(r => setTimeout(r, 0));
+      }
+
+      await updateFileChunkCount(fileId, expectedChunks);
+
+      // compute SHA-256 on assembled blob for integrity
+      const chunks = await getChunksForFile(fileId);
+      chunks.sort((a,b)=>a.index-b.index);
+      const assembled = new Blob(chunks.map(c=>c.blob), { type: meta.type });
+      const hash = await sha256Hex(assembled);
+
+      // store hash in metadata
+      const tx = db.transaction(FILE_STORE, 'readwrite');
+      const store = tx.objectStore(FILE_STORE);
+      const recReq = store.get(fileId);
+      recReq.onsuccess = e => {
+        const rec = e.target.result;
+        rec.sha256 = hash;
+        store.put(rec);
+      };
+
+    } catch (err) {
+      console.error('Chunk write failed', err);
+      try { await deleteFileAndChunks(fileId); } catch (e) { console.warn('cleanup failed', e); }
+      alert('Storage failed (see console). Partial data removed.');
+    } finally {
+      setTimeout(() => { progressCard.remove(); refreshGallery(); }, 600);
+    }
+  }
+  fileInput.value = '';
+}
+
+/* Download assembly */
+async function downloadFile(fileRec) {
+  const chunks = await getChunksForFile(fileRec.id);
+  if (!chunks || chunks.length === 0) { alert('No chunks found.'); return; }
+  chunks.sort((a, b) => a.index - b.index);
+  const blob = new Blob(chunks.map(c => c.blob), { type: fileRec.type || 'application/zip' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileRec.name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+/* Verify integrity without downloading */
+async function verifyFile(fileRec) {
+  const chunks = await getChunksForFile(fileRec.id);
+  if (!chunks || chunks.length === 0) { alert('No chunks found.'); return; }
+  chunks.sort((a,b)=>a.index-b.index);
+  const blob = new Blob(chunks.map(c=>c.blob), { type: fileRec.type || 'application/zip' });
+  const hash = await sha256Hex(blob);
+  const ok = fileRec.sha256 && fileRec.sha256 === hash;
+  alert(ok ? 'SHA-256 matches: file intact' : `SHA-256 mismatch\nstored: ${fileRec.sha256 || 'none'}\ncomputed: ${hash}`);
+}
+
+/* Gallery rendering */
+async function refreshGallery() {
+  const files = await getAllFiles();
+  gallery.innerHTML = "";
+  if (!files.length) {
+    gallery.innerHTML = "<p style='color:#bbb'>No ZIP files stored yet.</p>";
+    return;
+  }
+  files.sort((a, b) => b.createdAt - a.createdAt);
+  for (const f of files) {
+    const card = document.createElement("div");
+    card.className = "card";
+    const title = document.createElement("h3");
+    title.textContent = f.name;
+    card.appendChild(title);
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const sizeMB = (f.size / 1024 / 1024).toFixed(2);
+    meta.textContent = `${sizeMB} MB • ${f.chunkCount || 0} chunks`;
+
+    const actions = document.createElement("div");
+    actions.style.display = "flex";
+    actions.style.alignItems = "center";
+
+    const downloadBtn = document.createElement("button");
+    downloadBtn.className = "small-btn";
+    downloadBtn.textContent = "Download";
+    downloadBtn.onclick = async () => {
+      try {
+        await downloadFile(f);
+      } catch (err) {
+        console.error("download err", err);
+        alert("Download failed. See console.");
+      }
+    };
+
+    const verifyBtn = document.createElement("button");
+    verifyBtn.className = "small-btn";
+    verifyBtn.textContent = "Verify SHA-256";
+    verifyBtn.onclick = async () => {
+      try {
+        await verifyFile(f);
+      } catch (err) {
+        console.error("verify err", err);
+        alert("Verification failed. See console.");
+      }
+    };
+
+    const delBtn = document.createElement("button");
+    delBtn.className = "small-btn danger";
+    delBtn.textContent = "Delete";
+    delBtn.onclick = async () => {
+      if (!confirm("Delete this stored file?")) return;
+      await deleteFileAndChunks(f.id);
+      await refreshGallery();
+    };
+
+    actions.appendChild(downloadBtn);
+    actions.appendChild(verifyBtn);
+    actions.appendChild(delBtn);
+
+    const row = document.createElement("div");
+    row.style.display = "flex";
+    row.style.justifyContent = "space-between";
+    row.style.alignItems = "center";
+
+    const left = document.createElement("div");
+    left.appendChild(meta);
+
+    const right = document.createElement("div");
+    right.appendChild(actions);
+
+    row.appendChild(left);
+    row.appendChild(right);
+
+    card.appendChild(row);
+
+    if (f.sha256) {
+      const hashEl = document.createElement('div');
+      hashEl.className = 'hash';
+      hashEl.textContent = `SHA-256: ${f.sha256}`;
+      card.appendChild(hashEl);
+    }
+
+    gallery.appendChild(card);
+  }
+}
+
+/* Init */
+(async function init() {
+  try {
+    await openDB();
+    await refreshGallery();
+  } catch (err) {
+    console.error("DB init failed:", err);
+    alert("Failed to open IndexedDB. Make sure your browser supports it and storage is available.");
+  }
+})();
+</script>
+</body>
+</html>

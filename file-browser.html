@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>File Browser</title>
+<style>
+  body { margin:0; font-family:"Segoe UI",sans-serif; background:#1e1e1e; color:#fff; padding:20px; }
+  h2 { margin-top:0; }
+  .file-list { margin-top:10px; }
+  .file { padding:6px 10px; background:#2d2d2d; border:1px solid #444; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center; }
+  .file span { font-size:14px; }
+  .file button { background:#0078D7; border:none; color:#fff; padding:4px 8px; cursor:pointer; border-radius:4px; font-size:12px; }
+  .file button:hover { background:#006fcf; }
+  input[type="text"] { padding:6px; width:200px; margin-right:10px; }
+</style>
+</head>
+<body>
+
+<h2>📁 File Browser</h2>
+<div>
+  <input type="text" id="newFileName" placeholder="Enter file name">
+  <button onclick="createFile()">Create File</button>
+</div>
+
+<div class="file-list" id="fileList"></div>
+
+<script>
+const SYSTEM_FILES = ["system.txt"];
+let files = JSON.parse(localStorage.getItem("fakeFiles") || "[]");
+
+function renderFiles(){
+  const list = document.getElementById("fileList");
+  list.innerHTML = "";
+  const allFiles = [...SYSTEM_FILES, ...files];
+  allFiles.forEach(name => {
+    const div = document.createElement("div");
+    div.className = "file";
+    div.innerHTML = `<span>${name}</span>`;
+    if (!SYSTEM_FILES.includes(name)) {
+      const btn = document.createElement("button");
+      btn.textContent = "Delete";
+      btn.onclick = () => deleteFile(name);
+      div.appendChild(btn);
+    } else {
+      const lock = document.createElement("span");
+      lock.textContent = "🔒";
+      div.appendChild(lock);
+    }
+    list.appendChild(div);
+  });
+}
+
+function createFile(){
+  const input = document.getElementById("newFileName");
+  const name = input.value.trim();
+  if (!name || SYSTEM_FILES.includes(name) || files.includes(name)) return;
+  files.push(name);
+  localStorage.setItem("fakeFiles", JSON.stringify(files));
+  input.value = "";
+  renderFiles();
+}
+
+function deleteFile(name){
+  files = files.filter(f => f !== name);
+  localStorage.setItem("fakeFiles", JSON.stringify(files));
+  renderFiles();
+}
+
+renderFiles();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Chunked Video Storage & Streamer</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root { --bg:#0f0f0f; --card:#1e1e1e; --accent:#ff4b2b; --muted:#999; }
+    body { font-family: "Segoe UI", Roboto, sans-serif; background:var(--bg); color:#fff; margin:0; padding:2rem; text-align:center; }
+    #controls { display:flex; gap:0.75rem; justify-content:center; flex-wrap:wrap; margin-bottom:1rem; }
+    input[type="file"] { padding:0.5rem; border-radius:8px; background:#111; color:#fff; border:1px solid #222; }
+    button { background:var(--accent); color:#fff; border:none; padding:0.5rem 0.9rem; border-radius:8px; cursor:pointer; font-weight:600; }
+    #dropZone { border:2px dashed var(--accent); padding:1rem; border-radius:10px; margin:0.75rem auto; max-width:900px; color:var(--accent); background:#0b0b0b; display:none; }
+    #gallery { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:1rem; max-width:1200px; margin:1rem auto 0; }
+    .card { background:var(--card); padding:1rem; border-radius:12px; text-align:left; box-shadow:0 2px 8px rgba(0,0,0,0.6); }
+    .card h3 { margin:0 0 0.5rem 0; font-size:1rem; color:#fff; }
+    .card img { width:100%; border-radius:8px; display:block; margin-bottom:0.5rem; background:#000; }
+    .meta { font-size:0.85rem; color:var(--muted); margin-top:0.5rem; display:flex; justify-content:space-between; align-items:center; gap:0.5rem; }
+    .small-btn { background:#333; padding:0.35rem 0.6rem; border-radius:8px; font-size:0.85rem; color:#fff; border:none; cursor:pointer; }
+    #playerModal { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); align-items:center; justify-content:center; z-index:999; }
+    #playerBox { background:#111; padding:1rem; border-radius:10px; width:90%; max-width:900px; }
+    #playerBox video { width:100%; height:auto; background:#000; border-radius:8px; }
+    #status { color:var(--muted); margin-top:0.5rem; font-size:0.9rem; }
+  </style>
+</head>
+<body>
+  <h1>Chunked Video Storage & Streamer</h1>
+
+  <div id="controls">
+    <input id="fileInput" type="file" accept="video/*" multiple />
+    <button id="toggleDrop">Toggle Drop Area</button>
+    <button id="clearAll">Clear All Stored Videos</button>
+  </div>
+
+  <div id="dropZone">Drop video files here or use the file input above.</div>
+
+  <div id="gallery" aria-live="polite"></div>
+
+  <div id="playerModal">
+    <div id="playerBox">
+      <button id="closePlayer" style="float:right;background:#222;color:#fff;border:none;padding:0.4rem 0.6rem;border-radius:6px;cursor:pointer">Close</button>
+      <h3 id="playerTitle" style="margin-top:0;color:#fff"></h3>
+      <video id="player" controls></video>
+      <div id="status"></div>
+    </div>
+  </div>
+
+<script>
+/* -------------------------
+   IndexedDB schema:
+   - store 'files' : metadata records { id(auto), name, size, type, createdAt, chunkCount, thumbnail }
+   - store 'chunks': records { id(auto), fileId, index, blob }
+   ------------------------- */
+
+const DB_NAME = "chunkedVideoDB";
+const DB_VERSION = 1;
+const FILE_STORE = "files";
+const CHUNK_STORE = "chunks";
+const CHUNK_SIZE = 4 * 1024 * 1024; // 4 MB per chunk (tuneable)
+
+let db;
+async function openDB() {
+  return new Promise((resolve, reject) => {
+    const r = indexedDB.open(DB_NAME, DB_VERSION);
+    r.onupgradeneeded = e => {
+      const d = e.target.result;
+      if (!d.objectStoreNames.contains(FILE_STORE)) {
+        d.createObjectStore(FILE_STORE, { keyPath: "id", autoIncrement: true });
+      }
+      if (!d.objectStoreNames.contains(CHUNK_STORE)) {
+        const cs = d.createObjectStore(CHUNK_STORE, { keyPath: "id", autoIncrement: true });
+        cs.createIndex("fileId_idx", "fileId", { unique: false });
+        cs.createIndex("fileId_index", ["fileId", "index"], { unique: true });
+      }
+    };
+    r.onsuccess = e => { db = e.target.result; resolve(); };
+    r.onerror = () => reject(r.error);
+  });
+}
+
+function addFileMeta(meta) {
+  return new Promise((res, rej) => {
+    const tx = db.transaction(FILE_STORE, "readwrite");
+    const store = tx.objectStore(FILE_STORE);
+    const req = store.add(meta);
+    req.onsuccess = () => res(req.result);
+    req.onerror = () => rej(req.error);
+  });
+}
+
+function addChunkRecord(chunkRec) {
+  return new Promise((res, rej) => {
+    const tx = db.transaction(CHUNK_STORE, "readwrite");
+    const store = tx.objectStore(CHUNK_STORE);
+    const req = store.add(chunkRec);
+    req.onsuccess = () => res(req.result);
+    req.onerror = () => rej(req.error);
+  });
+}
+
+function getAllFiles() {
+  return new Promise((res, rej) => {
+    const tx = db.transaction(FILE_STORE, "readonly");
+    const store = tx.objectStore(FILE_STORE);
+    const req = store.getAll();
+    req.onsuccess = () => res(req.result);
+    req.onerror = () => rej(req.error);
+  });
+}
+
+function getChunksForFile(fileId) {
+  return new Promise((res, rej) => {
+    const tx = db.transaction(CHUNK_STORE, "readonly");
+    const store = tx.objectStore(CHUNK_STORE);
+    const idx = store.index("fileId_index");
+    const range = IDBKeyRange.bound([fileId, 0], [fileId, Number.MAX_SAFE_INTEGER]);
+    const req = idx.openCursor(range, "next");
+    const chunks = [];
+    req.onsuccess = e => {
+      const cur = e.target.result;
+      if (!cur) { res(chunks); return; }
+      chunks.push(cur.value);
+      cur.continue();
+    };
+    req.onerror = () => rej(req.error);
+  });
+}
+
+function deleteFileAndChunks(fileId) {
+  return new Promise((res, rej) => {
+    const tx = db.transaction([FILE_STORE, CHUNK_STORE], "readwrite");
+    tx.objectStore(FILE_STORE).delete(fileId);
+    const idx = tx.objectStore(CHUNK_STORE).index("fileId_idx");
+    const range = IDBKeyRange.only(fileId);
+    const req = idx.openCursor(range);
+    req.onsuccess = e => {
+      const cur = e.target.result;
+      if (!cur) return;
+      cur.delete();
+      cur.continue();
+    };
+    tx.oncomplete = () => res();
+    tx.onerror = () => rej(tx.error);
+  });
+}
+
+function clearAllData() {
+  return new Promise((res, rej) => {
+    const tx = db.transaction([FILE_STORE, CHUNK_STORE], "readwrite");
+    tx.objectStore(FILE_STORE).clear();
+    tx.objectStore(CHUNK_STORE).clear();
+    tx.oncomplete = () => res();
+    tx.onerror = () => rej(tx.error);
+  });
+}
+
+/* -------------------------
+   UI elements
+   ------------------------- */
+const fileInput = document.getElementById("fileInput");
+const dropZone = document.getElementById("dropZone");
+const toggleDrop = document.getElementById("toggleDrop");
+const gallery = document.getElementById("gallery");
+const clearAllBtn = document.getElementById("clearAll");
+const playerModal = document.getElementById("playerModal");
+const player = document.getElementById("player");
+const playerTitle = document.getElementById("playerTitle");
+const status = document.getElementById("status");
+const closePlayer = document.getElementById("closePlayer");
+
+toggleDrop.onclick = () => dropZone.style.display = dropZone.style.display === "none" ? "block" : "none";
+dropZone.ondragover = e => { e.preventDefault(); dropZone.style.opacity = "0.9"; };
+dropZone.ondragleave = e => { dropZone.style.opacity = "1"; };
+dropZone.ondrop = e => { e.preventDefault(); dropZone.style.opacity = "1"; handleFiles(e.dataTransfer.files); };
+
+fileInput.onchange = () => handleFiles(fileInput.files);
+clearAllBtn.onclick = async () => {
+  if (!confirm("Remove all stored videos?")) return;
+  await clearAllData();
+  await refreshGallery();
+};
+
+closePlayer.onclick = () => {
+  // stop playback and revoke any MSE
+  if (player.src && player.src.startsWith("blob:")) {
+    URL.revokeObjectURL(player.src);
+  }
+  if (player.mediaSource) {
+    try { player.pause(); player.removeAttribute("src"); player.load(); } catch(e){}
+  }
+  playerModal.style.display = "none";
+  status.textContent = "";
+};
+
+/* -------------------------
+   Chunked storage routine
+   ------------------------- */
+async function handleFiles(fileList) {
+  if (!fileList || fileList.length === 0) return;
+  for (const file of Array.from(fileList)) {
+    try {
+      // 1) create file metadata record first (chunkCount unknown yet)
+      const meta = {
+        name: file.name,
+        size: file.size,
+        type: file.type || "video/mp4",
+        createdAt: Date.now(),
+        chunkCount: 0,
+        thumbnail: null
+      };
+      const fileId = await addFileMeta(meta);
+
+      // 2) store chunks sequentially, yielding to UI between chunks
+      const total = file.size;
+      let offset = 0;
+      let index = 0;
+      while (offset < total) {
+        const end = Math.min(offset + CHUNK_SIZE, total);
+        const slice = file.slice(offset, end);
+        // store chunk record { fileId, index, blob }
+        await addChunkRecord({ fileId, index, blob: slice });
+        offset = end;
+        index++;
+        // yield to UI to keep responsive
+        await new Promise(r => setTimeout(r, 0));
+      }
+
+      // 3) update chunkCount in file meta
+      await updateFileChunkCount(fileId, index);
+
+      // 4) async thumbnail generation (non-blocking)
+      generateThumbnailAsync(file, fileId).catch(err => console.warn("thumb err", err));
+
+    } catch (err) {
+      console.error("Error storing file:", err);
+      alert("Failed to store file. Browser storage quota may be exceeded or an error occurred.");
+    }
+  }
+  await refreshGallery();
+  fileInput.value = "";
+}
+
+function updateFileChunkCount(fileId, count) {
+  return new Promise((res, rej) => {
+    const tx = db.transaction(FILE_STORE, "readwrite");
+    const store = tx.objectStore(FILE_STORE);
+    const req = store.get(fileId);
+    req.onsuccess = e => {
+      const rec = e.target.result;
+      if (!rec) return res();
+      rec.chunkCount = count;
+      const upd = store.put(rec);
+      upd.onsuccess = () => res();
+      upd.onerror = () => rej(upd.error);
+    };
+    req.onerror = () => rej(req.error);
+  });
+}
+
+/* -------------------------
+   Thumbnail generation (async, small memory)
+   ------------------------- */
+async function generateThumbnailAsync(file, fileId) {
+  // create a small objectURL from the first chunk (or whole file if small)
+  const firstSlice = file.slice(0, Math.min(1 * 1024 * 1024, file.size)); // 1MB preview slice
+  const url = URL.createObjectURL(firstSlice);
+  const vid = document.createElement("video");
+  vid.muted = true;
+  vid.playsInline = true;
+  vid.src = url;
+  await new Promise((resolve, reject) => {
+    vid.addEventListener("loadedmetadata", resolve, { once: true });
+    vid.addEventListener("error", () => reject(new Error("thumbnail load error")), { once: true });
+  });
+  // seek to small time
+  const seekTime = Math.min(1, vid.duration / 2 || 0);
+  await new Promise((resolve) => {
+    vid.currentTime = seekTime;
+    vid.addEventListener("seeked", resolve, { once: true });
+    // fallback
+    setTimeout(resolve, 1200);
+  });
+
+  // draw to canvas
+  const canvas = document.createElement("canvas");
+  const maxW = 320, maxH = 180;
+  const ratio = Math.min(maxW / (vid.videoWidth || maxW), maxH / (vid.videoHeight || maxH));
+  canvas.width = Math.round((vid.videoWidth || maxW) * ratio);
+  canvas.height = Math.round((vid.videoHeight || maxH) * ratio);
+  const ctx = canvas.getContext("2d");
+  try { ctx.drawImage(vid, 0, 0, canvas.width, canvas.height); } catch(e) {}
+  const thumbnail = canvas.toDataURL("image/jpeg", 0.7);
+
+  URL.revokeObjectURL(url);
+  vid.remove();
+
+  // store thumbnail in file meta
+  return new Promise((res, rej) => {
+    const tx = db.transaction(FILE_STORE, "readwrite");
+    const store = tx.objectStore(FILE_STORE);
+    const req = store.get(fileId);
+    req.onsuccess = e => {
+      const rec = e.target.result;
+      if (!rec) return res();
+      rec.thumbnail = thumbnail;
+      store.put(rec).onsuccess = () => res();
+    };
+    req.onerror = () => rej(req.error);
+  });
+}
+
+/* -------------------------
+   Playback via MediaSource (streaming from IDB)
+   ------------------------- */
+async function streamFileToPlayer(fileRec) {
+  player.pause();
+  player.removeAttribute("src");
+  player.load();
+  playerTitle.textContent = fileRec.name;
+  status.textContent = "Preparing stream...";
+
+  // prefer MSE if available and mime is supported
+  const mime = fileRec.type || "video/mp4";
+  const mseSupported = !!window.MediaSource && MediaSource.isTypeSupported && MediaSource.isTypeSupported(mime + "; codecs=\"avc1.42E01E, mp4a.40.2\"") || !!window.MediaSource;
+  if (!mseSupported) {
+    // fallback: assemble a blob URL (may be memory heavy for very large files)
+    status.textContent = "MSE not supported; using blob fallback (may use more memory).";
+    const chunks = await getChunksForFile(fileRec.id);
+    const blobs = chunks.map(c => c.blob);
+    const big = new Blob(blobs, { type: mime });
+    const url = URL.createObjectURL(big);
+    player.src = url;
+    playerModal.style.display = "flex";
+    player.play().catch(()=>{});
+    return;
+  }
+
+  // Use MediaSource to append chunks sequentially
+  const mediaSource = new MediaSource();
+  player.src = URL.createObjectURL(mediaSource);
+  playerModal.style.display = "flex";
+
+  mediaSource.addEventListener("sourceopen", async () => {
+    status.textContent = "Streaming from storage...";
+    const sourceBuffer = mediaSource.addSourceBuffer(mime);
+    sourceBuffer.mode = "segments";
+
+    // fetch chunks sequentially and append
+    const chunks = await getChunksForFile(fileRec.id);
+    let i = 0;
+    async function appendNext() {
+      if (i >= chunks.length) {
+        try { mediaSource.endOfStream(); } catch(e){}
+        status.textContent = "Playback ready.";
+        return;
+      }
+      const chunkBlob = chunks[i].blob;
+      const ab = await chunkBlob.arrayBuffer(); // only one chunk in memory
+      // wait if updating
+      if (sourceBuffer.updating) {
+        sourceBuffer.addEventListener("updateend", () => {
+          sourceBuffer.appendBuffer(ab);
+        }, { once: true });
+      } else {
+        sourceBuffer.appendBuffer(ab);
+      }
+      // after append finishes, move to next
+      sourceBuffer.addEventListener("updateend", () => {
+        i++;
+        // yield to UI
+        setTimeout(appendNext, 0);
+      }, { once: true });
+    }
+
+    appendNext();
+  }, { once: true });
+
+  player.play().catch(()=>{});
+}
+
+/* -------------------------
+   Gallery rendering
+   ------------------------- */
+async function refreshGallery() {
+  const files = await getAllFiles();
+  gallery.innerHTML = "";
+  if (!files.length) {
+    gallery.innerHTML = "<p style='color:#bbb'>No videos stored yet.</p>";
+    return;
+  }
+  files.sort((a,b)=>b.createdAt - a.createdAt);
+  for (const f of files) {
+    const card = document.createElement("div");
+    card.className = "card";
+
+    if (f.thumbnail) {
+      const img = document.createElement("img");
+      img.src = f.thumbnail;
+      img.alt = f.name;
+      card.appendChild(img);
+    }
+
+    const title = document.createElement("h3");
+    title.textContent = f.name;
+    card.appendChild(title);
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const info = document.createElement("div");
+    const sizeMB = (f.size / 1024 / 1024).toFixed(2);
+    info.textContent = `${sizeMB} MB • ${f.chunkCount || 0} chunks`;
+    const actions = document.createElement("div");
+
+    const playBtn = document.createElement("button");
+    playBtn.className = "small-btn";
+    playBtn.textContent = "Play (stream)";
+    playBtn.onclick = async () => {
+      status.textContent = "";
+      try {
+        await streamFileToPlayer(f);
+      } catch (err) {
+        console.error("stream err", err);
+        alert("Playback failed. See console for details.");
+      }
+    };
+
+    const downloadBtn = document.createElement("button");
+    downloadBtn.className = "small-btn";
+    downloadBtn.style.marginLeft = "0.5rem";
+    downloadBtn.textContent = "Download";
+    downloadBtn.onclick = async () => {
+      // assemble a blob for download (may be heavy)
+      const chunks = await getChunksForFile(f.id);
+      const blob = new Blob(chunks.map(c => c.blob), { type: f.type });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = f.name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url), 2000);
+    };
+
+    const delBtn = document.createElement("button");
+    delBtn.className = "small-btn";
+    delBtn.style.marginLeft = "0.5rem";
+    delBtn.textContent = "Delete";
+    delBtn.onclick = async () => {
+      if (!confirm("Delete this stored video?")) return;
+      await deleteFileAndChunks(f.id);
+      await refreshGallery();
+    };
+
+    actions.appendChild(playBtn);
+    actions.appendChild(downloadBtn);
+    actions.appendChild(delBtn);
+
+    meta.appendChild(info);
+    meta.appendChild(actions);
+    card.appendChild(meta);
+    gallery.appendChild(card);
+  }
+}
+
+/* -------------------------
+   Init
+   ------------------------- */
+(async function init() {
+  try {
+    await openDB();
+    await refreshGallery();
+  } catch (err) {
+    console.error("DB init failed:", err);
+    alert("Failed to open IndexedDB. Make sure your browser supports it and storage is available.");
+  }
+})();
+</script>
+</body>
+</html>

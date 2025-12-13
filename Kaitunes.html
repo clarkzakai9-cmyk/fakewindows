@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>ZakaiTunes 🎶</title>
+  <style>
+    body {
+      font-family: "Segoe UI", sans-serif;
+      background-color: #0f0f0f;
+      color: #fff;
+      margin: 0;
+      padding: 2rem;
+      text-align: center;
+    }
+
+    #controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      justify-content: center;
+      margin-bottom: 2rem;
+    }
+
+    input, select {
+      padding: 0.5rem;
+      border-radius: 6px;
+      border: none;
+    }
+
+    button {
+      background: linear-gradient(145deg, #ff4b2b, #ff416c);
+      color: white;
+      border: none;
+      padding: 0.65rem 1.4rem;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 0.95rem;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(255, 75, 43, 0.3);
+      transition: background 0.3s ease, transform 0.2s ease, box-shadow 0.3s ease;
+    }
+
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 16px rgba(255, 75, 43, 0.45);
+    }
+
+    .track-card {
+      background-color: #1a1a1a;
+      border-radius: 14px;
+      padding: 1rem;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+      max-width: 500px;
+      margin: 1rem auto;
+      text-align: center;
+      position: relative;
+    }
+
+    .track-thumb {
+      width: 100%;
+      max-height: 300px;
+      object-fit: cover;
+      border-radius: 10px;
+      margin-bottom: 0.5rem;
+    }
+
+    .now-playing {
+      position: fixed;
+      top: 1rem;
+      right: 1rem;
+      background: #1e1e1e;
+      padding: 1rem;
+      border-radius: 10px;
+      box-shadow: 0 0 10px rgba(255, 75, 43, 0.4);
+      max-width: 220px;
+      text-align: left;
+    }
+
+    .track-menu {
+      position: absolute;
+      top: 1rem;
+      right: 1rem;
+    }
+
+    .menu-dropdown {
+      display: none;
+      position: absolute;
+      top: 2.2rem;
+      right: 0;
+      background: #222;
+      color: white;
+      padding: 1rem;
+      border-radius: 8px;
+      z-index: 100;
+      box-shadow: 0 0 10px rgba(0,0,0,0.5);
+    }
+
+    .menu-dropdown select,
+    .menu-dropdown input {
+      display: block;
+      width: 100%;
+      margin-bottom: 0.5rem;
+      padding: 0.5rem;
+      border-radius: 6px;
+      border: none;
+    }
+
+    .track-menu .menuBtn {
+      background: none;
+      color: white;
+      font-size: 1.2rem;
+      border: none;
+      cursor: pointer;
+    }
+
+    .track-menu.open .menu-dropdown {
+      display: block;
+    }
+
+    #uploadModal {
+      display: none;
+      position: fixed;
+      background: #1e1e1e;
+      padding: 2rem;
+      border-radius: 10px;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 99;
+      box-shadow: 0 0 40px rgba(255, 75, 43, 0.5);
+    }
+
+    #uploadModal.show {
+      display: block;
+      opacity: 1;
+    }
+
+    #dropZone {
+      border: 2px dashed #ff4b2b;
+      padding: 1rem;
+      border-radius: 10px;
+      margin-top: 1rem;
+      background-color: #111;
+      color: #ff4b2b;
+    }
+
+    .drag-over {
+      background-color: #220505;
+      border-color: #ff8a80;
+      color: #ff8a80;
+    }
+  </style>
+</head>
+<body>
+  <h1>ZakaiTunes 🎶</h1>
+
+  <div id="controls">
+    <input id="searchInput" placeholder="Search tracks..." />
+    <select id="playlistFilter">
+      <option value="all">All Playlists</option>
+    </select>
+    <button id="uploadBtn">Upload</button>
+    <button id="viewListenLater">Listen Later</button>
+  </div>
+
+  <div id="nowPlaying" class="now-playing" style="display:none;"></div>
+  <div id="gallery"></div>
+
+  <div id="uploadModal">
+    <h2>Upload Track</h2>
+    <input type="text" id="titleInput" placeholder="Track Title" /><br/><br/>
+    <input type="text" id="artistInput" placeholder="Artist Name" /><br/><br/>
+    <input type="text" id="playlistInput" placeholder="Playlist (e.g. Chill, Vibes...)" /><br/><br/>
+    <input type="file" id="fileInput" accept="audio/*" />
+    <div id="dropZone">Drop your track here</div><br/>
+    <button id="saveBtn">Save</button>
+  </div>
+
+  <canvas id="previewCanvas" style="display:none;"></canvas>
+  <script>
+    const DB_NAME = "miniTunesDB", DB_VERSION = 1, STORE_NAME = "tracks";
+    let db, tracks = [];
+    const $ = id => document.getElementById(id),
+          gallery = $("gallery"),
+          nowPlaying = $("nowPlaying"),
+          playlistFilter = $("playlistFilter"),
+          searchInput = $("searchInput"),
+          uploadBtn = $("uploadBtn"),
+          viewLLBtn = $("viewListenLater"),
+          uploadModal = $("uploadModal"),
+          titleInput = $("titleInput"),
+          artistInput = $("artistInput"),
+          playlistInput = $("playlistInput"),
+          fileInput = $("fileInput"),
+          dropZone = $("dropZone"),
+          saveBtn = $("saveBtn");
+
+    function openDB() {
+      return new Promise((resolve, reject) => {
+        const req = indexedDB.open(DB_NAME, DB_VERSION);
+        req.onupgradeneeded = e => {
+          const store = e.target.result.createObjectStore(STORE_NAME, { keyPath: "id", autoIncrement: true });
+          store.createIndex("title", "title", { unique: false });
+        };
+        req.onsuccess = () => { db = req.result; resolve(); };
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    function getAllTracks() {
+      return new Promise(res => {
+        const tx = db.transaction(STORE_NAME, "readonly");
+        tx.objectStore(STORE_NAME).getAll().onsuccess = e => res(e.target.result);
+      });
+    }
+
+    function updateTrack(updated) {
+      return new Promise(res => {
+        const tx = db.transaction(STORE_NAME, "readwrite");
+        tx.objectStore(STORE_NAME).put(updated).onsuccess = () => res();
+      });
+    }
+
+    function addTrack(trackObj) {
+      return new Promise(res => {
+        const tx = db.transaction(STORE_NAME, "readwrite");
+        tx.objectStore(STORE_NAME).add(trackObj).onsuccess = () => res();
+      });
+    }
+
+    function renderTracks(list) {
+      gallery.innerHTML = list.length === 0 ? "<p>No tracks found.</p>" : "";
+      playlistFilter.innerHTML = '<option value="all">All Playlists</option>';
+      const playlists = [...new Set(list.map(t => t.playlist))];
+      playlists.forEach(p => {
+        const opt = document.createElement("option");
+        opt.value = p;
+        opt.textContent = p;
+        playlistFilter.appendChild(opt);
+      });
+
+      list.forEach(track => {
+        const url = URL.createObjectURL(track.fileBlob);
+        const card = document.createElement("div");
+        card.className = "track-card";
+        card.innerHTML = `
+          <img src="${track.thumbnail}" class="track-thumb" />
+          <h3>${track.title}</h3>
+          <p style="font-size: 0.85rem; color: #aaa;">by ${track.artist}</p>
+          <p style="font-size: 0.8rem; color: #777;">Playlist: ${track.playlist}</p>
+          <audio controls style="width:100%" src="${url}"></audio>
+          <br/>
+          <button data-id="${track.id}" class="listenLaterBtn">🎧 Listen Later</button>
+
+          <div class="track-menu">
+            <button class="menuBtn">⋮</button>
+            <div class="menu-dropdown">
+              <select class="playlistSelect">
+                ${playlists.map(p => `<option value="${p}" ${p === track.playlist ? "selected" : ""}>${p}</option>`).join("")}
+              </select>
+              <input type="text" placeholder="Or new playlist..." class="newPlaylistInput" />
+              <button class="assignBtn">Assign</button>
+            </div>
+          </div>
+        `;
+        gallery.appendChild(card);
+
+        card.querySelector(".menuBtn").onclick = () => {
+          card.querySelector(".track-menu").classList.toggle("open");
+        };
+
+        card.querySelector(".assignBtn").onclick = async () => {
+          const sel = card.querySelector(".playlistSelect");
+          const newPl = card.querySelector(".newPlaylistInput").value.trim();
+          const newPlaylist = newPl || sel.value;
+          if (newPlaylist) {
+            track.playlist = newPlaylist;
+            await updateTrack(track);
+            tracks = await getAllTracks();
+            renderTracks(tracks);
+          }
+        };
+
+        card.querySelector("audio").onplay = () => {
+          nowPlaying.innerHTML = `<b>Now Playing:</b><br>${track.title}<br><i>${track.artist}</i>`;
+          nowPlaying.style.display = "block";
+        };
+
+        card.querySelector(".listenLaterBtn").onclick = () => {
+          const list = JSON.parse(localStorage.getItem("listenLater") || "[]");
+          if (!list.includes(track.id)) {
+            list.push(track.id);
+            localStorage.setItem("listenLater", JSON.stringify(list));
+            alert("Added to Listen Later");
+          }
+        };
+      });
+    }
+
+    saveBtn.onclick = async () => {
+      const title = titleInput.value.trim();
+      const artist = artistInput.value.trim() || "Unknown";
+      const playlist = playlistInput.value.trim() || "General";
+      const file = fileInput.files[0];
+      if (!title || !file) return alert("Track title and audio file required");
+      const thumbnail = "https://via.placeholder.com/600x300.png?text=" + encodeURIComponent(title);
+      const track = { title, artist, playlist, fileBlob: file, thumbnail };
+      await addTrack(track);
+      tracks = await getAllTracks();
+      renderTracks(tracks);
+      uploadModal.classList.remove("show");
+      [titleInput, artistInput, playlistInput].forEach(i => i.value = "");
+      fileInput.value = "";
+    };
+
+    playlistFilter.onchange = () => {
+      const val = playlistFilter.value;
+      renderTracks(val === "all" ? tracks : tracks.filter(t => t.playlist === val));
+    };
+
+    searchInput.oninput = () => {
+      const q = searchInput.value.toLowerCase();
+      renderTracks(tracks.filter(t =>
+        t.title.toLowerCase().includes(q) ||
+        t.artist.toLowerCase().includes(q) ||
+        t.playlist.toLowerCase().includes(q)
+      ));
+    };
+
+    viewLLBtn.onclick = () => {
+      const list = JSON.parse(localStorage.getItem("listenLater") || "[]");
+      renderTracks(tracks.filter(t => list.includes(t.id)));
+    };
+
+    uploadBtn.onclick = () => uploadModal.classList.add("show");
+    window.onkeydown = e => { if (e.key === "Escape") uploadModal.classList.remove("show"); };
+
+    dropZone.ondragover = e => { e.preventDefault(); dropZone.classList.add("drag-over"); };
+    dropZone.ondragleave = () => dropZone.classList.remove("drag-over");
+    dropZone.ondrop = e => {
+      e.preventDefault();
+      dropZone.classList.remove("drag-over");
+      fileInput.files = e.dataTransfer.files;
+    };
+
+    window.onload = async () => {
+      await openDB();
+      tracks = await getAllTracks();
+      renderTracks(tracks);
+    };
+  </script>
+</body>
+</html>

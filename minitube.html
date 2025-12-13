@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>MiniTube 🎬</title>
+<style>
+    body {
+  font-family: "Segoe UI", sans-serif;
+  background-color: #0f0f0f;
+  color: #fff;
+  margin: 0;
+  padding: 2rem;
+  text-align: center;
+}
+
+#controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: center;
+  margin-bottom: 2rem;
+}
+
+input, select {
+  padding: 0.5rem;
+  border-radius: 6px;
+  border: none;
+}
+
+button {
+  background: #ff4b2b;
+  color: white;
+  border: none;
+  padding: 0.6rem 1.2rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: bold;
+}
+
+button:hover {
+  background: #ff416c;
+}
+
+#gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1.5rem;
+  max-width: 1200px;
+  margin: auto;
+}
+
+.video-card {
+  background-color: #1e1e1e;
+  padding: 1rem;
+  border-radius: 12px;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.video-card:hover {
+  transform: translateY(-6px);
+  box-shadow: 0 0 20px rgba(255, 75, 43, 0.3);
+}
+
+#uploadModal {
+  display: none;
+  position: fixed;
+  background: #1e1e1e;
+  padding: 2rem;
+  border-radius: 10px;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 99;
+}
+
+#dropZone {
+  border: 2px dashed #ff4b2b;
+  padding: 1rem;
+  border-radius: 10px;
+  margin-top: 1rem;
+  background-color: #111;
+  color: #ff4b2b;
+}
+
+</style>
+</head>
+<body>
+  <h1>MiniTube 🎬</h1>
+
+  <div id="controls">
+    <input id="searchInput" placeholder="Search videos..." />
+    <select id="categoryFilter">
+      <option value="all">All Categories</option>
+      <option value="Chill">Chill</option>
+      <option value="Funny">Funny</option>
+      <option value="Devlogs">Devlogs</option>
+    </select>
+    <button id="uploadBtn">Upload</button>
+    <button id="viewWatchLater">Watch Later</button>
+  </div>
+
+  <div id="gallery"></div>
+
+  <div id="uploadModal">
+    <h2>Upload a Video</h2>
+    <input type="text" id="titleInput" placeholder="Video Title" />
+    <select id="categoryInput">
+      <option value="Chill">Chill</option>
+      <option value="Funny">Funny</option>
+      <option value="Devlogs">Devlogs</option>
+    </select>
+    <input type="file" id="fileInput" accept="video/mp4,video/webm" />
+    <div id="dropZone">Drop a video file here</div>
+    <small id="metaInfo"></small>
+    <button id="saveBtn">Save</button>
+    <canvas id="previewCanvas" style="display:none;"></canvas>
+  </div>
+
+  <script>// IndexedDB setup
+const DB_NAME = "miniTubeDB",
+      DB_VERSION = 1,
+      STORE_NAME = "videos";
+let db, videos = [];
+
+// open (or create) the database
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = e => {
+      const store = e.target.result.createObjectStore(STORE_NAME, {
+        keyPath: "id",
+        autoIncrement: true
+      });
+      // index on title for search
+      store.createIndex("title", "title", { unique: false });
+    };
+    req.onsuccess = e => {
+      db = e.target.result;
+      resolve();
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+// add a video record (with blob) to IDB
+function addVideoToDB(videoObj) {
+  return new Promise((res, rej) => {
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    const store = tx.objectStore(STORE_NAME);
+    const addReq = store.add(videoObj);
+    addReq.onsuccess = () => res(addReq.result);
+    addReq.onerror = () => rej(addReq.error);
+  });
+}
+
+// fetch all videos from IDB
+function getAllVideosFromDB() {
+  return new Promise((res, rej) => {
+    const tx = db.transaction(STORE_NAME, "readonly");
+    const store = tx.objectStore(STORE_NAME);
+    const allReq = store.getAll();
+    allReq.onsuccess = () => res(allReq.result);
+    allReq.onerror = () => rej(allReq.error);
+  });
+}
+
+// DOM elements
+const gallery       = document.getElementById("gallery");
+const searchInput   = document.getElementById("searchInput");
+const categoryFilter= document.getElementById("categoryFilter");
+const uploadBtn     = document.getElementById("uploadBtn");
+const viewWLBtn     = document.getElementById("viewWatchLater");
+const uploadModal   = document.getElementById("uploadModal");
+const titleInput    = document.getElementById("titleInput");
+const categoryInput = document.getElementById("categoryInput");
+const fileInput     = document.getElementById("fileInput");
+const dropZone      = document.getElementById("dropZone");
+const metaInfo      = document.getElementById("metaInfo");
+const saveBtn       = document.getElementById("saveBtn");
+const previewCanvas = document.getElementById("previewCanvas");
+
+// render an array of video records
+function renderVideos(list) {
+  gallery.innerHTML = "";
+  list.forEach(video => {
+    const card = document.createElement("div");
+    card.className = "video-card";
+
+    // create object URL for the blob
+    const url = video.fileBlob
+      ? URL.createObjectURL(video.fileBlob)
+      : video.url; // fallback (YouTube embed)
+
+    card.innerHTML = `
+      <h3>${video.title}</h3>
+      ${
+        video.fileBlob
+          ? `<video controls poster="${video.thumbnail}" src="${url}" width="100%"></video>`
+          : `<iframe width="100%" height="180" src="${url}" allowfullscreen></iframe>`
+      }
+      <p>Category: ${video.category}</p>
+      <button data-id="${video.id}">Watch Later</button>
+    `;
+
+    // Watch Later handler
+    card.querySelector("button")
+        .onclick = e => addToWatchLater(+e.target.dataset.id);
+
+    gallery.appendChild(card);
+  });
+}
+
+// on save: capture thumbnail, metadata, then store in IDB
+saveBtn.onclick = async () => {
+  const title    = titleInput.value.trim();
+  const category = categoryInput.value;
+  const file     = fileInput.files[0];
+  if (!title || !file) return alert("Title + video file required");
+
+  // create blob URL to load video
+  const blobUrl = URL.createObjectURL(file);
+  const vid     = document.createElement("video");
+  vid.src       = blobUrl;
+  vid.currentTime = 2;
+
+  vid.onloadeddata = async () => {
+    // 1) thumbnail
+    previewCanvas.width = 160;
+    previewCanvas.height = 90;
+    const ctx = previewCanvas.getContext("2d");
+    ctx.drawImage(vid, 0, 0, 160, 90);
+    const thumbnail = previewCanvas.toDataURL("image/jpeg");
+
+    // 2) metadata
+    const sizeMB = (file.size / 1024 / 1024).toFixed(2);
+    const totalSec = Math.floor(vid.duration);
+    const mins     = Math.floor(totalSec / 60);
+    const secs     = String(totalSec % 60).padStart(2, "0");
+    metaInfo.textContent = `Duration: ${mins}:${secs} | Size: ${sizeMB} MB`;
+
+    // 3) store full blob in IndexedDB
+    const videoRecord = {
+      title,
+      category,
+      thumbnail,
+      fileBlob: file    // NOTE: storing the raw File/Blob
+    };
+    const id = await addVideoToDB(videoRecord);
+
+    // update local cache + UI
+    videos = await getAllVideosFromDB();
+    renderVideos(videos);
+
+    // reset modal
+    uploadModal.style.display = "none";
+    titleInput.value = "";
+    fileInput.value = "";
+    metaInfo.textContent = "";
+  };
+};
+
+// Watch Later uses localStorage to store IDs
+function addToWatchLater(id) {
+  const list = JSON.parse(localStorage.getItem("watchLater") || "[]");
+  if (!list.includes(id)) {
+    list.push(id);
+    localStorage.setItem("watchLater", JSON.stringify(list));
+    alert(`Added to Watch Later`);
+  }
+}
+
+// view Watch Later
+viewWLBtn.onclick = () => {
+  const wl = JSON.parse(localStorage.getItem("watchLater") || "[]");
+  renderVideos(videos.filter(v => wl.includes(v.id)));
+};
+
+// search & filter
+searchInput.oninput = () => {
+  const q = searchInput.value.toLowerCase();
+  renderVideos(videos.filter(v => v.title.toLowerCase().includes(q)));
+};
+categoryFilter.onchange = () => {
+  const c = categoryFilter.value;
+  renderVideos(
+    c === "all" ? videos : videos.filter(v => v.category === c)
+  );
+};
+
+// upload modal & drag-n-drop
+uploadBtn.onclick = () => (uploadModal.style.display = "block");
+dropZone.ondragover = e => e.preventDefault();
+dropZone.ondrop = e => {
+  e.preventDefault();
+  fileInput.files = e.dataTransfer.files;
+};
+
+// initialize
+(async function init() {
+  await openDB();
+  videos = await getAllVideosFromDB();
+  renderVideos(videos);
+})();
+</script>
+</body>
+</html>

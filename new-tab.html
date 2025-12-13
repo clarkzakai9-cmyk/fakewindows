@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>New Tab</title>
+  <style>
+body {
+  font-family: 'Segoe UI', sans-serif;
+  text-align: center;
+  margin: 60px auto;
+  max-width: 700px;
+  color: #ffffff;
+  background: url('images/background.jpg') no-repeat center center;
+  background-size: cover;
+}
+
+    h1 {
+      font-size: 2em;
+      margin-bottom: 10px;
+    }
+    p {
+      font-style: italic;
+      color: #777;
+      margin-top: 40px;
+    }
+    .clock {
+      font-size: 1.4em;
+      margin-bottom: 30px;
+    }
+    .search-box {
+      margin: 20px auto;
+      display: flex;
+      justify-content: center;
+    }
+    .search-box input {
+      width: 60%;
+      padding: 10px;
+      font-size: 16px;
+      border: 1px solid #aaa;
+      border-radius: 4px 0 0 4px;
+      outline: none;
+    }
+    .search-box button {
+      padding: 10px 16px;
+      font-size: 16px;
+      border: 1px solid #aaa;
+      border-left: none;
+      border-radius: 0 4px 4px 0;
+      background: #333;
+      color: white;
+      cursor: pointer;
+    }
+    .search-box button:hover {
+      background: #555;
+    }
+    button {
+      margin: 8px;
+      padding: 12px 20px;
+      font-size: 15px;
+      border: none;
+      border-radius: 5px;
+      background: #333;
+      color: white;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #555;
+    }
+  </style>
+</head>
+<body>
+  <h1>🧭 Welcome back, Captain!</h1>
+  <div class="clock" id="clock">Loading time...</div>
+
+  <!-- NEW SEARCH BAR -->
+  <div class="search-box">
+    <input type="text" id="searchInput" placeholder="Search the web with Bing..." />
+    <button onclick="performSearch()">🔍</button>
+  </div>
+
+  <div>
+    <button onclick="parent.promptOnline()">🌐 Go Online</button>
+    <button onclick="parent.document.getElementById('fileInput').click()">📂 Open File</button>
+    <button onclick="parent.renderSidebar('games')">🎮 Games</button>
+  </div>
+
+  <p id="quote"></p>
+
+  <script>
+    function updateClock() {
+      document.getElementById("clock").textContent =
+        new Date().toLocaleTimeString();
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    const quotes = [
+      "One tab closer to greatness.",
+      "The next idea is just a click away.",
+      "CTRL + T is the start of something big.",
+      "Curiosity opened this tab.",
+      "Tabs are just thoughts waiting to unfold."
+    ];
+    document.getElementById("quote").textContent =
+      quotes[Math.floor(Math.random() * quotes.length)];
+
+function performSearch() {
+  const query = document.getElementById("searchInput").value.trim();
+  if (query && parent.promptOnline) {
+    const bingURL = "https://www.bing.com/search?q=" + encodeURIComponent(query);
+    parent.promptOnline(bingURL);
+  }
+}
+
+    
+  </script>
+</body>
+</html>

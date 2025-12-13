@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Farm Game</title>
+  <style>
+    :root{
+      --bg: #0f0f12;
+      --panel: #15151a;
+      --panel-2: #1a1a21;
+      --red: #d23b3b;
+      --text: #e7e7ee;
+      --muted: #9aa0aa;
+      --green: #3bd26a;
+      --yellow: #e8b84a;
+      --shadow: 0 10px 30px rgba(0,0,0,0.35);
+      --radius: 14px;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: radial-gradient(1200px 800px at 80% -20%, #17171e 0%, #0f0f12 65%) fixed;
+      color: var(--text);
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+    .topbar {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 16px;
+      align-items: center;
+      padding: 12px 16px;
+      background: linear-gradient(180deg, var(--panel), var(--panel-2));
+      box-shadow: var(--shadow);
+      position: sticky; top: 0; z-index: 10;
+    }
+    .title { font-weight: 700; letter-spacing: 0.2px; }
+    .stats { display: flex; gap: 10px; align-items: center; color: var(--muted); }
+    .stats .sep { opacity: 0.6; }
+    .actions { display: flex; gap: 8px; }
+    .pill {
+      background: #21212a; color: var(--text);
+      border: 1px solid #2a2a34;
+      padding: 8px 14px; border-radius: 999px;
+      cursor: pointer;
+    }
+    .pill:hover { border-color: var(--red); color: #fff; }
+    .pill.danger:hover { background: #2a1414; border-color: var(--red); }
+    .game { display: grid; grid-template-columns: 280px 1fr; gap: 16px; padding: 16px; }
+    .sidebar {
+      background: var(--panel); border: 1px solid #22222b;
+      border-radius: var(--radius); padding: 14px; box-shadow: var(--shadow);
+    }
+    .sidebar h3 { margin: 12px 0 8px; }
+    .inventory, .shop, .tools { display: grid; gap: 8px; }
+    .inv-item, .shop-btn, .tool-btn {
+      background: #1c1c23; border: 1px solid #262631;
+      border-radius: 12px; padding: 10px 12px;
+    }
+    .shop-btn, .tool-btn { cursor: pointer; }
+    .shop-btn:hover, .tool-btn:hover { border-color: var(--red); }
+    .tips { margin-top: 12px; color: var(--muted); font-size: 13px; }
+    .field {
+      background: var(--panel); border: 1px solid #22222b;
+      border-radius: var(--radius); padding: 16px;
+      box-shadow: var(--shadow); display: grid;
+    }
+    .grid {
+      --cols: 10; --rows: 8;
+      display: grid;
+      grid-template-columns: repeat(var(--cols), 56px);
+      grid-template-rows: repeat(var(--rows), 56px);
+      gap: 8px; justify-content: start;
+    }
+    .tile {
+      background: #17171e; border: 1px solid #23232e;
+      border-radius: 10px; display: grid; place-items: center;
+      position: relative; cursor: pointer;
+      transition: border-color 0.15s ease, transform 0.05s ease;
+    }
+    .tile:hover { border-color: var(--red); transform: translateY(-1px); }
+    .tile .stage { font-size: 22px; }
+    .tile .badge {
+      position: absolute; bottom: 6px; right: 6px;
+      font-size: 12px; color: var(--muted);
+      background: #121218; padding: 2px 6px;
+      border-radius: 999px; border: 1px solid #23232e;
+    }
+    .status { padding: 10px 16px; color: var(--muted); border-top: 1px solid #1e1e27; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="title">🌾 Farm Game</div>
+    <div class="stats">
+      <span id="coins">0</span> coins
+      <span class="sep">•</span>
+      Day <span id="day">1</span>
+      <span class="sep">•</span>
+      Energy <span id="energy">100</span>
+    </div>
+    <div class="actions">
+      <button id="sleepBtn" class="pill">Sleep</button>
+      <button id="saveBtn" class="pill">Save</button>
+      <button id="resetBtn" class="pill danger">Reset</button>
+    </div>
+  </header>
+
+  <main class="game">
+    <aside class="sidebar">
+      <h3>Inventory</h3>
+      <div class="inventory">
+        <div class="inv-item"><span>Seeds:</span><span id="seedCount">5</span></div>
+        <div class="inv-item"><span>Water:</span><span id="waterCount">10</span></div>
+      </div>
+      <h3>Shop</h3>
+      <div class="shop">
+        <button class="shop-btn" id="buySeedsBtn">Buy Seeds (5c)</button>
+        <button class="shop-btn" id="buyWaterBtn">Buy Water (2c)</button>
+      </div>
+      <h3>Tools</h3>
+      <div class="tools">
+        <button class="tool-btn" data-tool="plant">Plant</button>
+        <button class="tool-btn" data-tool="water">Water</button>
+        <button class="tool-btn" data-tool="harvest">Harvest</button>
+      </div>
+      <div class="tips">
+        <p><strong>Tip:</strong> Plant → Water each day → Harvest when ready.</p>
+        <p>Shortcuts: 1=Plant, 2=Water, 3=Harvest, S=Save, R=Reset, Space=Sleep.</p>
+      </div>
+    </aside>
+    <section class="field"><div id="grid" class="grid"></div></section>
+  </main>
+
+  <footer class="status"><div id="statusText">Welcome to your farm.</div></footer>
+
+  <script>
+  (() => {
+    const COLS=10, ROWS=8, MAX_ENERGY=100;
+    const ENERGY_COST={plant:6,water:4,harvest:3};
+    const GROWTH_DAYS=3, WATER_REQUIRED=2, REWARD_COINS=15;
+    const PRICES={seed:5,water:2};
+    let state=load()||defaultState();
+    function defaultState(){return{day:1,coins:20,energy:MAX_ENERGY,seeds:5,water:10,tool:"plant",tiles:Array.from({length:ROWS},()=>Array.from({length:COLS},()=>({plantedDay:null,waterCount:0,stage:"empty"})))};}
+    const gridEl=document.getElementById("grid"),coinsEl=document.getElementById("coins"),dayEl=document.getElementById("day"),energyEl=document.getElementById("energy"),seedCountEl=document.getElementById("seedCount"),waterCountEl=document.getElementById("waterCount"),statusTextEl=document.getElementById("statusText");
+    const sleepBtn=document.getElementById("sleepBtn"),saveBtn=document.getElementById("saveBtn"),resetBtn=document.getElementById("resetBtn"),buySeedsBtn=document.getElementById("buySeedsBtn"),buyWaterBtn=document.getElementById("buyWaterBtn");
+    document.querySelectorAll(".tool-btn").forEach(btn=>btn.addEventListener("click",()=>{state.tool=btn.dataset.tool;flashStatus("Tool: "+capitalize(state.tool));highlightTool();}));
+    buildGrid();highlightTool();render();
+    sleepBtn.addEventListener("click",()=>{state.day++;state.energy=MAX_ENERGY;advanceGrowth();flashStatus("New day: "+state.day);render();save    ;});
+
+    saveBtn.addEventListener("click",()=>{save();flashStatus("Game saved.");});
+    resetBtn.addEventListener("click",()=>{if(confirm("Reset your farm? This clears local save data.")){state=defaultState();render();save();flashStatus("Farm reset.");}});
+    buySeedsBtn.addEventListener("click",()=>{if(state.coins>=PRICES.seed){state.coins-=PRICES.seed;state.seeds++;flashStatus("Bought 1 seed.");render();save();}else{flashStatus("Not enough coins.");}});
+    buyWaterBtn.addEventListener("click",()=>{if(state.coins>=PRICES.water){state.coins-=PRICES.water;state.water++;flashStatus("Bought 1 water.");render();save();}else{flashStatus("Not enough coins.");}});
+
+    window.addEventListener("keydown",(e)=>{
+      if(e.key==="1")setTool("plant");
+      else if(e.key==="2")setTool("water");
+      else if(e.key==="3")setTool("harvest");
+      else if(e.key.toLowerCase()==="s"){save();flashStatus("Game saved.");}
+      else if(e.key.toLowerCase()==="r"){resetBtn.click();}
+      else if(e.code==="Space"){e.preventDefault();sleepBtn.click();}
+    });
+
+    function setTool(tool){state.tool=tool;flashStatus("Tool: "+capitalize(tool));highlightTool();}
+    function buildGrid(){
+      gridEl.style.setProperty("--cols",COLS);
+      gridEl.style.setProperty("--rows",ROWS);
+      gridEl.innerHTML="";
+      for(let r=0;r<ROWS;r++){for(let c=0;c<COLS;c++){
+        const tileEl=document.createElement("div");
+        tileEl.className="tile";tileEl.dataset.r=r;tileEl.dataset.c=c;
+        tileEl.addEventListener("click",onTileClick);
+        tileEl.appendChild(document.createElement("div")).className="stage";
+        tileEl.appendChild(document.createElement("div")).className="badge";
+        gridEl.appendChild(tileEl);
+      }}
+    }
+    function onTileClick(e){
+      const r=+e.currentTarget.dataset.r,c=+e.currentTarget.dataset.c;
+      const tile=state.tiles[r][c];
+      if(state.energy<=0){flashStatus("Too tired. Sleep to restore energy.");return;}
+      if(state.tool==="plant"){
+        if(tile.stage==="empty"&&state.seeds>0){
+          tile.stage="sprout";tile.plantedDay=state.day;tile.waterCount=0;
+          state.seeds--;spendEnergy("plant");flashStatus("Planted a seed.");
+        }else flashStatus("Can't plant here.");
+      }else if(state.tool==="water"){
+        if(tile.stage==="sprout"||tile.stage==="growing"){
+          if(state.water>0){tile.waterCount++;state.water--;spendEnergy("water");flashStatus("Watered the crop.");}
+          else flashStatus("No water left.");
+        }else flashStatus("Nothing to water.");
+      }else if(state.tool==="harvest"){
+        if(tile.stage==="ready"){
+          tile.stage="empty";tile.plantedDay=null;tile.waterCount=0;
+          state.coins+=REWARD_COINS;spendEnergy("harvest");flashStatus("Harvested +"+REWARD_COINS+" coins.");
+        }else flashStatus("Not ready to harvest.");
+      }
+      render();save();
+    }
+    function advanceGrowth(){
+      for(let r=0;r<ROWS;r++){for(let c=0;c<COLS;c++){
+        const tile=state.tiles[r][c];
+        if(tile.stage==="sprout"){tile.stage="growing";}
+        else if(tile.stage==="growing"){
+          const daysSince=state.day-tile.plantedDay;
+          if(daysSince>=GROWTH_DAYS&&tile.waterCount>=WATER_REQUIRED){tile.stage="ready";}
+        }
+      }}
+    }
+    function spendEnergy(action){state.energy=Math.max(0,state.energy-ENERGY_COST[action]);}
+    function render(){
+      coinsEl.textContent=state.coins;dayEl.textContent=state.day;energyEl.textContent=state.energy;
+      seedCountEl.textContent=state.seeds;waterCountEl.textContent=state.water;
+      const tiles=gridEl.querySelectorAll(".tile");let i=0;
+      for(let r=0;r<ROWS;r++){for(let c=0;c<COLS;c++){
+        const tile=state.tiles[r][c],el=tiles[i++],stageEl=el.querySelector(".stage"),badgeEl=el.querySelector(".badge");
+        stageEl.textContent=stageEmoji(tile.stage);stageEl.removeAttribute("style");
+        badgeEl.textContent=tile.stage==="empty"?"":tile.stage==="sprout"?"W:"+tile.waterCount+"/"+WATER_REQUIRED:
+          tile.stage==="growing"?"D:"+(Math.max(0,GROWTH_DAYS-(state.day-tile.plantedDay)))+" W:"+tile.waterCount+"/"+WATER_REQUIRED:
+          tile.stage==="ready"?"Ready":"";
+      }}
+    }
+    function stageEmoji(stage){if(stage==="empty")return"🟫";if(stage==="sprout")return"🌱";if(stage==="growing")return"🌿";if(stage==="ready")return"🌾";return"❓";}
+    function flashStatus(text){statusTextEl.textContent=text;}
+    function highlightTool(){document.querySelectorAll(".tool-btn").forEach(btn=>{btn.style.borderColor=btn.dataset.tool===state.tool?"var(--red)":"#262631";btn.style.color=btn.dataset.tool===state.tool?"#fff":"var(--text)";});}
+    function save(){try{localStorage.setItem("farm-save",JSON.stringify(state));}catch(e){}}
+    function load(){try{const raw=localStorage.getItem("farm-save");return raw?JSON.parse(raw):null;}catch(e){return null;}}
+    function capitalize(s){return s[0].toUpperCase()+s.slice(1);}
+  })();
+  </script>
+</body>
+</html>
