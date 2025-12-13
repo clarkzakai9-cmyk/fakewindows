@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>UNO - Zakai Edition (True 2P Hot-Seat)</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      background: #1e1e1e;
+      color: #fff;
+      margin: 0;
+      padding: 20px;
+      text-align: center;
+    }
+    h1, h2 { margin: 8px 0; }
+
+    #game-area { max-width: 1000px; margin: 0 auto; }
+    #table {
+      display: grid;
+      grid-template-areas:
+        "top"
+        "center"
+        "bottom";
+      grid-template-columns: 1fr;
+      gap: 12px;
+      background: radial-gradient(circle at center, #2e7d32, #1b5e20);
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 0 30px rgba(0,0,0,0.7), inset 0 0 60px rgba(0,0,0,0.35);
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+    #top    { grid-area: top; }
+    #center {
+      grid-area: center;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 22px;
+      padding: 12px;
+      border-radius: 12px;
+      outline: 2px solid rgba(255,255,255,0.06);
+      box-shadow: inset 0 0 20px rgba(0,0,0,0.4);
+    }
+    #bottom { grid-area: bottom; }
+
+    .hand {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 6px 0;
+      min-height: 160px;
+    }
+
+    /* Card backs for hidden hands */
+    .card-back {
+      width: 92px;
+      height: 138px;
+      border-radius: 10px;
+      background: radial-gradient(circle at center, crimson 20%, #a30000 100%);
+      box-shadow: 0 8px 18px rgba(0,0,0,0.45);
+      position: relative;
+    }
+    .card-back::before {
+      content: "UNO";
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%) rotate(-15deg);
+      font-size: 24px;
+      font-weight: 900;
+      font-family: Arial Black, sans-serif;
+      color: gold;
+      text-shadow: 1px 1px 2px black;
+    }
+
+    /* Piles */
+    .pile, .draw {
+      width: 100px;
+      height: 140px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 900;
+      font-size: 18px;
+      border: 2px solid #999;
+      box-shadow: 0 8px 18px rgba(0,0,0,0.45);
+      position: relative;
+      user-select: none;
+    }
+    .pile.red    { background: #d62328; }
+    .pile.green  { background: #1f9d50; }
+    .pile.blue   { background: #1e66e2; }
+    .pile.yellow { background: #f2c300; color: #111; }
+    .pile.black  { background: #000; color: white; }
+    .pile { transform: rotate(-6deg); }
+
+    .draw {
+      background: radial-gradient(circle at center, crimson 20%, #a30000 100%);
+      cursor: pointer;
+      color: white;
+    }
+    .draw::before {
+      content: "UNO";
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%) rotate(-15deg);
+      font-size: 24px;
+      font-weight: 900;
+      font-family: Arial Black, sans-serif;
+      color: gold;
+      text-shadow: 1px 1px 2px black;
+    }
+
+    /* Classic UNO card face */
+    .card {
+      width: 92px;
+      height: 138px;
+      border-radius: 10px;
+      font-weight: 900;
+      position: relative;
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      color: white;
+      box-shadow: 0 8px 18px rgba(0,0,0,0.45);
+      overflow: hidden;
+      transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease;
+    }
+    .card:hover { transform: translateY(-3px); box-shadow: 0 12px 24px rgba(0,0,0,0.5); }
+    .card.disabled { cursor: not-allowed; filter: grayscale(0.6) brightness(0.9); }
+
+    .red    { background: #d62328; }
+    .green  { background: #1f9d50; }
+    .blue   { background: #1e66e2; }
+    .yellow { background: #f2c300; color: #111; }
+    .black  { background: #000; }
+
+    /* Diagonal band */
+    .card::before {
+      content: "";
+      position: absolute;
+      width: 160%;
+      height: 65%;
+      left: -30%;
+      top: 20%;
+      transform: rotate(-20deg);
+      background: rgba(255,255,255,0.18);
+      border-radius: 40px;
+    }
+
+    /* Center value/icon */
+    .card .center {
+      font-size: 48px;
+      line-height: 1;
+      text-shadow: 0 2px 0 rgba(0,0,0,0.25);
+      z-index: 1;
+    }
+
+    /* Corner pips */
+    .card .pip {
+      position: absolute;
+      font-size: 18px;
+      opacity: 0.9;
+      z-index: 2;
+    }
+    .card .pip.top-left     { top: 8px;  left: 10px; }
+    .card .pip.bottom-right { bottom: 8px; right: 10px; }
+
+    /* Wild quadrant motif */
+    .card.black::after {
+      content: "";
+      position: absolute;
+      width: 72%;
+      height: 72%;
+      border-radius: 50%;
+      background:
+        conic-gradient(
+          from 45deg,
+          #d62328 0 25%,
+          #1f9d50 25% 50%,
+          #1e66e2 50% 75%,
+          #f2c300 75% 100%
+        );
+      opacity: 0.85;
+      z-index: 0;
+    }
+
+    /* Animations */
+    @keyframes card-draw-animation {
+      0%   { transform: scale(0.3); opacity: 0; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+    @keyframes card-discard-animation {
+      0%   { transform: translateY(0) scale(1); opacity: 1; }
+      100% { transform: translateY(-40px) rotate(-15deg) scale(0.9); opacity: 0.5; }
+    }
+    .card-draw    { animation: card-draw-animation 0.25s ease-out; }
+    .card-discard { animation: card-discard-animation 0.35s ease-in; }
+
+    /* Status and controls */
+    #status { margin: 8px 0 12px; font-weight: 700; letter-spacing: 0.3px; }
+    .controls { display: flex; gap: 10px; justify-content: center; margin-bottom: 10px; }
+    .btn {
+      padding: 10px 16px;
+      font-size: 16px;
+      font-weight: 700;
+      border: none;
+      border-radius: 8px;
+      background: royalblue;
+      color: white;
+      cursor: pointer;
+      transition: transform 0.12s ease, filter 0.12s ease;
+    }
+    .btn:hover { transform: translateY(-2px); }
+    .btn.secondary { background: #444; }
+    .btn.warn { background: #d62328; }
+    .btn:disabled { filter: grayscale(0.6) brightness(0.9); cursor: not-allowed; }
+
+    /* Color picker */
+    #color-picker {
+      position: fixed;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      background: #222;
+      padding: 20px;
+      border-radius: 10px;
+      box-shadow: 0 0 10px #000;
+      display: none;
+      z-index: 20;
+      width: 300px;
+    }
+    #color-picker h3 { margin-top: 0; }
+    .colorBtn {
+      width: 60px; height: 60px; margin: 10px;
+      font-size: 24px; border: none; border-radius: 50%;
+      cursor: pointer;
+    }
+    .colorBtn.red    { background: crimson; }
+    .colorBtn.green  { background: seagreen; }
+    .colorBtn.blue   { background: royalblue; }
+    .colorBtn.yellow { background: gold; color: black; }
+
+    /* Turn handoff overlay */
+    #handoff {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.8);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 30;
+    }
+    #handoff .panel {
+      background: #111;
+      padding: 24px;
+      border-radius: 12px;
+      box-shadow: 0 0 20px rgba(0,0,0,0.8);
+      max-width: 380px;
+    }
+    #handoff h3 { margin-top: 0; }
+  </style>
+</head>
+<body>
+  <div id="game-area">
+    <h1>UNO - Zakai Edition</h1>
+    <div id="status">Current player: Player 1</div>
+
+    <div class="controls">
+      <button class="btn" onclick="newGame()">New game</button>
+      <button id="btn-draw" class="btn" onclick="drawCard()">Draw card</button>
+      <button id="btn-pass" class="btn secondary" onclick="passTurn()">Pass</button>
+      <button id="btn-uno" class="btn warn" onclick="callUno()">Say UNO</button>
+    </div>
+
+    <div id="table">
+      <div id="top">
+        <h2>Player 1 (Top) — Cards: <span id="count-top">0</span></h2>
+        <div class="hand" id="hand-top"></div>
+      </div>
+
+      <div id="center">
+        <div class="pile" id="pile"></div>
+        <div class="draw" id="draw" onclick="drawCard()" title="Draw from deck"></div>
+      </div>
+
+      <div id="bottom">
+        <h2>Player 2 (Bottom) — Cards: <span id="count-bottom">0</span></h2>
+        <div class="hand" id="hand-bottom"></div>
+      </div>
+    </div>
+
+    <!-- Wild color picker -->
+    <div id="color-picker">
+      <h3>Choose a color</h3>
+      <button class="colorBtn red" onclick="selectWildColor('red')">❤️</button>
+      <button class="colorBtn green" onclick="selectWildColor('green')">💚</button>
+      <button class="colorBtn blue" onclick="selectWildColor('blue')">💙</button>
+      <button class="colorBtn yellow" onclick="selectWildColor('yellow')">💛</button>
+    </div>
+
+    <!-- Turn handoff overlay -->
+    <div id="handoff">
+      <div class="panel">
+        <h3>Pass the device</h3>
+        <p>It is now <strong id="handoff-player">Player X</strong>'s turn.</p>
+        <button class="btn" onclick="confirmHandoff()">Start turn</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // State
+    let deck = [], players = [[], []];
+    let pile = null, wildColor = null;
+    let currentPlayer = 0;  // 0 = Player 1 (Top), 1 = Player 2 (Bottom)
+    let direction = 1;
+    let skip = false, drawStack = 0, wildPending = false, lastMoveWasDraw = false;
+    let unoFlags = [false, false]; // if true, player has said UNO while at 2 cards
+
+    const COLORS = ["red", "green", "blue", "yellow"];
+    const VALUES = [...Array(10).keys()].map(String).concat("Skip", "Reverse", "Draw2", "Wild", "Wild4");
+
+    // Setup
+    function newGame() {
+      deck = createDeck();
+      players = [[], []];
+      currentPlayer = 0;
+      direction = 1;
+      skip = false; drawStack = 0; wildPending = false; wildColor = null;
+      lastMoveWasDraw = false;
+      unoFlags = [false, false];
+      deal();
+      updateUI();
+      showHandoff(); // Start with Player 1 turn confirm
+    }
+
+    function createDeck() {
+      const d = [];
+      for (const color of COLORS) {
+        for (const val of VALUES) {
+          if (["Wild", "Wild4"].includes(val)) continue;
+          d.push({ color, val });
+          if (val !== "0") d.push({ color, val });
+        }
+      }
+      for (let i = 0; i < 4; i++) {
+        d.push({ color: "black", val: "Wild" });
+        d.push({ color: "black", val: "Wild4" });
+      }
+      // Fisher-Yates shuffle
+      for (let i = d.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [d[i], d[j]] = [d[j], d[i]];
+      }
+      return d;
+    }
+
+    function deal() {
+      for (let i = 0; i < 7; i++) {
+        for (let p = 0; p < 2; p++) {
+          players[p].push(deck.pop());
+        }
+      }
+      pile = deck.pop();
+      wildColor = pile.color !== "black" ? pile.color : null;
+    }
+
+    // UI
+    function updateUI() {
+      document.getElementById("status").textContent = `Current player: Player ${currentPlayer + 1}`;
+
+      const displayColor = wildColor || pile.color;
+      const p = document.getElementById("pile");
+      p.textContent = `${displayColor?.toUpperCase()} ${pile.val}`;
+      p.className = `pile ${displayColor}`;
+
+      renderHands();
+
+      document.getElementById("count-top").textContent = players[0].length;
+      document.getElementById("count-bottom").textContent = players[1].length;
+
+      // Controls
+      document.getElementById("btn-draw").disabled = wildPending;
+      document.getElementById("btn-pass").disabled = !(lastMoveWasDraw && !wildPending);
+      // UNO button enabled when player has 2 cards
+      document.getElementById("btn-uno").disabled = !(players[currentPlayer].length === 2 && !unoFlags[currentPlayer]);
+    }
+
+    function renderHands() {
+      const top = document.getElementById("hand-top");
+      const bottom = document.getElementById("hand-bottom");
+      top.innerHTML = ""; bottom.innerHTML = "";
+
+      // Top
+      if (currentPlayer === 0) {
+        players[0].forEach((card, idx) => top.appendChild(makeCard(card, 0, idx)));
+      } else {
+        for (let i = 0; i < players[0].length; i++) {
+          const back = document.createElement("div");
+          back.className = "card-back";
+          top.appendChild(back);
+        }
+      }
+
+      // Bottom
+      if (currentPlayer === 1) {
+        players[1].forEach((card, idx) => bottom.appendChild(makeCard(card, 1, idx)));
+      } else {
+        for (let i = 0; i < players[1].length; i++) {
+          const back = document.createElement("div");
+          back.className = "card-back";
+          bottom.appendChild(back);
+        }
+      }
+    }
+
+    function makeCard(card, pIdx, cIdx) {
+      const c = document.createElement("div");
+      c.className = `card ${card.color} card-draw`;
+
+      const center = document.createElement("div");
+      center.className = "center";
+      center.textContent = getIcon(card);
+
+      const pipTL = document.createElement("div");
+      pipTL.className = "pip top-left";
+      pipTL.textContent = pipText(card);
+
+      const pipBR = document.createElement("div");
+      pipBR.className = "pip bottom-right";
+      pipBR.textContent = pipText(card);
+
+      c.appendChild(center);
+      c.appendChild(pipTL);
+      c.appendChild(pipBR);
+
+      if (currentPlayer === pIdx && canPlay(card)) {
+        c.onclick = () => playCard(pIdx, cIdx);
+      } else {
+        c.classList.add("disabled");
+      }
+      return c;
+    }
+
+    function getIcon(card) {
+      const icons = {
+        "Skip": "🚫",
+        "Reverse": "🔁",
+        "Draw2": "➕2",
+        "Wild": "🎨",
+        "Wild4": "➕4"
+      };
+      return icons[card.val] || card.val;
+    }
+    function pipText(card) {
+      if (card.val === "Wild")   return "🎨";
+      if (card.val === "Wild4")  return "+4";
+      if (card.val === "Draw2")  return "+2";
+      if (card.val === "Skip")   return "⛔";
+      if (card.val === "Reverse")return "↺";
+      return card.val;
+    }
+
+    // Rules
+    function canPlay(card) {
+      if (wildPending) return false;
+      if (drawStack > 0 && !["Draw2", "Wild4"].includes(card.val)) return false;
+      const activeColor = wildColor || pile.color;
+      return (
+        card.color === activeColor ||
+        card.val === pile.val ||
+        card.color === "black"
+      );
+    }
+
+    function playCard(pIdx, cIdx) {
+      if (pIdx !== currentPlayer || wildPending) return;
+      const card = players[pIdx][cIdx];
+      if (!canPlay(card)) return;
+
+      const handEl = document.getElementById(pIdx === 0 ? "hand-top" : "hand-bottom");
+      const cardEl = handEl.children[cIdx];
+      cardEl.classList.add("card-discard");
+
+      setTimeout(() => {
+        players[pIdx].splice(cIdx, 1);
+        pile = card;
+        lastMoveWasDraw = false;
+
+        // UNO penalty check: if player went to 1 card without calling UNO previously, draw 2
+        if (players[pIdx].length === 1 && !unoFlags[pIdx]) {
+          // Apply penalty right away (house rule timing; adjust as preferred)
+          players[pIdx].push(deck.pop(), deck.pop());
+          alert(`Player ${pIdx + 1} forgot to say UNO! +2 penalty.`);
+        }
+        // Reset their UNO flag after playing
+        unoFlags[pIdx] = false;
+
+        if (card.color === "black") {
+          wildPending = true;
+          showColorPicker();
+        } else {
+          wildColor = card.color;
+          applyEffect(card);
+          checkWin(pIdx);
+          nextTurn();
+        }
+        updateUI();
+      }, 300);
+    }
+
+    function applyEffect(card) {
+      if (card.val === "Skip")    skip = true;
+      if (card.val === "Reverse") direction *= -1; // in 2P, net effect is a skip by turn math
+      if (card.val === "Draw2")   drawStack += 2;
+      if (card.val === "Wild4")   drawStack += 4;
+    }
+
+    function drawCard() {
+      if (wildPending) return;
+      // Forced draw resolves immediately and passes turn
+      if (drawStack > 0) {
+        for (let i = 0; i < drawStack; i++) {
+          players[currentPlayer].push(deck.pop());
+        }
+        drawStack = 0;
+        lastMoveWasDraw = false;
+        endTurnAndHandoff();
+        return;
+      }
+      // Normal draw; player may pass if no play
+      players[currentPlayer].push(deck.pop());
+      lastMoveWasDraw = true;
+      updateUI();
+    }
+
+    function passTurn() {
+      if (!lastMoveWasDraw || wildPending) return;
+      lastMoveWasDraw = false;
+      endTurnAndHandoff();
+    }
+
+    function callUno() {
+      if (players[currentPlayer].length === 2 && !unoFlags[currentPlayer]) {
+        unoFlags[currentPlayer] = true;
+        alert(`Player ${currentPlayer + 1} calls UNO!`);
+        updateUI();
+      }
+    }
+
+    // Color picker
+    function showColorPicker() {
+      document.getElementById("color-picker").style.display = "block";
+    }
+    function selectWildColor(color) {
+      if (!color || !COLORS.includes(color)) return;
+      wildColor = color;
+      wildPending = false;
+      document.getElementById("color-picker").style.display = "none";
+      applyEffect(pile);
+      checkWin(currentPlayer);
+      nextTurn();
+      updateUI();
+    }
+
+    // Turn rotation + handoff
+    function nextTurn() {
+      const steps = skip ? 2 : 1;
+      currentPlayer = (currentPlayer + steps * direction + 2) % 2;
+      skip = false;
+    }
+
+    function endTurnAndHandoff() {
+      nextTurn();
+      updateUI();
+      showHandoff();
+    }
+
+    function showHandoff() {
+      const overlay = document.getElementById("handoff");
+      document.getElementById("handoff-player").textContent = `Player ${currentPlayer + 1}`;
+      overlay.style.display = "flex";
+    }
+    function confirmHandoff() {
+      document.getElementById("handoff").style.display = "none";
+      updateUI(); // reveal only active player's hand
+    }
+
+    function checkWin(pIdx) {
+      if (players[pIdx].length === 0) {
+        alert(`Player ${pIdx + 1} wins! 🎉`);
+        newGame();
+      }
+    }
+
+    // Init
+    newGame();
+
+    // Also allow clicking the deck area
+    document.getElementById("draw").addEventListener("click", () => {
+      drawCard();
+    });
+  </script>
+</body>
+</html>

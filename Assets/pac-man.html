@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Pac-Man Power Mode</title>
+  <style>
+    body {
+      background: black;
+      color: white;
+      font-family: monospace;
+      text-align: center;
+      margin: 0;
+    }
+    canvas {
+      display: block;
+      margin: 0 auto;
+      border: 2px solid white;
+      background: black;
+    }
+  </style>
+</head>
+<body>
+  <h1>Pac-Man 👻 Power Mode</h1>
+  <p>Score: <span id="score">0</span> | Level: <span id="level">1</span> | Lives: <span id="lives">3</span></p>
+  <canvas id="gameCanvas" width="1280" height="768"></canvas>
+  <script>
+    
+    // [GAME.JS STARTS HERE — Fully Combined]
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const tileSize = 32;
+    const scoreSpan = document.getElementById('score');
+    const levelSpan = document.getElementById('level');
+    const livesSpan = document.getElementById('lives');
+
+const mazeTemplate = [
+  "1111111111111111111111111111111111111111",
+  "1000000000000000000000000000050000000001",
+  "1011111111111111111111111151011111111101",
+  "1010000100000000010000000500000100010101",
+  "1010100110111111011011151111011011010101",
+  "1010100000100001001000000001010000010101",
+  "1010111111110101011051111111011111110101",
+  "1010000000000100010000000001000000000101",
+  "1011111110111111111111111111111011111101",
+  "1000000010100000000000000000010010000001",
+  "1011111010111111111011111111111011111101",
+  "1000000010100000510000000000000010000001",
+  "1011111110111111011111111111111111111101",
+  "1010000000100000010000000000010000000001",
+  "1010111111110111111011111111011111111101",
+  "1000100000000100000010000005000000000001",
+  "1011101111111111011111111111011111111101",
+  "1000000000000001000000000001000000000001",
+  "1011111111111101111111111111011111115101",
+  "1000000000000000000000000000000000000001",
+  "1111111111111111111111111111111111111111"
+];
+
+
+
+
+
+
+
+
+    let level = 1, score = 0, lives = 3;
+    let maze, pellets = [], powerPellets = [], pacman;
+    let allGhosts = [], activeGhosts = [], frame = 0;
+    let powerTimer = 0, gameOver = false, justHit = false;
+    const keys = {};
+
+    function loadMaze() {
+      maze = mazeTemplate.map(row => row.split(''));
+      pellets = [];
+      powerPellets = [];
+      for (let y = 0; y < maze.length; y++) {
+        for (let x = 0; x < maze[0].length; x++) {
+          const char = maze[y][x];
+          if (char === '0' || char === ' ') pellets.push({ x, y, eaten: false });
+          if (char === '5') powerPellets.push({ x, y, active: true });
+        }
+      }
+    }
+
+    function resetEntities() {
+      pacman = { x: 1, y: 1, px: 1, py: 1, dir: [1, 0], nextDir: [1, 0] };
+allGhosts = [
+  { x: 19, y: 8, px: 19, py: 8, color: 'red', iq: 5 },
+  { x: 19, y: 8, px: 19, py: 8, color: 'pink', iq: 3 },
+  { x: 19, y: 8, px: 19, py: 8, color: 'cyan', iq: 2 },
+  { x: 19, y: 8, px: 19, py: 8, color: 'orange', iq: 1 }
+];
+
+      activeGhosts = [];
+      let i = 0;
+      function release() {
+        if (i < allGhosts.length) {
+          activeGhosts.push(allGhosts[i]);
+          i++;
+          setTimeout(release, 1000);
+        }
+      }
+      setTimeout(release, 1000);
+    }
+
+    function initGame() {
+      loadMaze();
+      resetEntities();
+      gameOver = false;
+      justHit = false;
+      scoreSpan.textContent = score;
+      levelSpan.textContent = level;
+      livesSpan.textContent = lives;
+    }
+
+    function isWall(x, y) {
+      return maze[y] && maze[y][x] === '1';
+    }
+
+    function drawMaze() {
+      for (let y = 0; y < maze.length; y++) {
+        for (let x = 0; x < maze[0].length; x++) {
+          if (maze[y][x] === '1') {
+            ctx.fillStyle = 'blue';
+            ctx.fillRect(x * tileSize, y * tileSize, tileSize, tileSize);
+          }
+        }
+      }
+    }
+
+    function drawPellets() {
+      ctx.fillStyle = 'white';
+      for (let p of pellets) {
+        if (!p.eaten) {
+          ctx.beginPath();
+          ctx.arc(p.x * tileSize + tileSize / 2, p.y * tileSize + tileSize / 2, 4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.fillStyle = 'violet';
+      for (let p of powerPellets) {
+        if (p.active) {
+          ctx.beginPath();
+          ctx.arc(p.x * tileSize + tileSize / 2, p.y * tileSize + tileSize / 2, 10 + Math.sin(frame / 5) * 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+
+    function drawPacman() {
+      const px = pacman.px * tileSize + tileSize / 2;
+      const py = pacman.py * tileSize + tileSize / 2;
+      const dir = pacman.dir.join(',');
+      const angles = { "1,0": 0, "-1,0": Math.PI, "0,-1": 1.5 * Math.PI, "0,1": 0.5 * Math.PI };
+      const angleOffset = angles[dir] || 0;
+      const mouth = Math.abs(Math.sin(frame / 5)) * 0.4;
+      ctx.fillStyle = 'yellow';
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.arc(px, py, 14, angleOffset + mouth, angleOffset + Math.PI * 2 - mouth);
+      ctx.lineTo(px, py);
+      ctx.fill();
+    }
+
+    function drawGhost(g) {
+      const x = g.px * tileSize;
+      const y = g.py * tileSize;
+      ctx.fillStyle = g.eaten ? 'black' : (powerTimer > 0 ? 'blue' : g.color);
+      ctx.beginPath();
+      ctx.arc(x + 16, y + 20, 14, Math.PI, 0);
+      ctx.rect(x + 2, y + 20, 28, 12);
+      for (let i = 0; i < 3; i++) {
+        ctx.arc(x + 8 + i * 8, y + 32, 4, 0, Math.PI, true);
+      }
+      ctx.fill();
+    }
+
+    function updatePositions() {
+      const speed = 0.15;
+      pacman.px += (pacman.x - pacman.px) * speed;
+      pacman.py += (pacman.y - pacman.py) * speed;
+      for (let g of activeGhosts) {
+        g.px += (g.x - g.px) * speed * 0.5;
+        g.py += (g.y - g.py) * speed * 0.5;
+      }
+    }
+
+    function movePacman() {
+      if (frame % 10 !== 0) return;
+      const [dx, dy] = pacman.nextDir;
+      if (!isWall(pacman.x + dx, pacman.y + dy)) pacman.dir = [dx, dy];
+      const [mx, my] = pacman.dir;
+      if (!isWall(pacman.x + mx, pacman.y + my)) {
+        pacman.x += mx;
+        pacman.y += my;
+      }
+    }
+
+ function updateGhosts() {
+  if (frame % 20 !== 0 || powerTimer > 0) return;
+
+  for (let g of activeGhosts) {
+    if (g.eaten) continue;
+
+    const dirs = [[1,0], [-1,0], [0,1], [0,-1]];
+    const options = dirs.filter(([dx, dy]) => !isWall(g.x + dx, g.y + dy));
+
+    if (g.iq <= 2) {
+      const move = options[Math.floor(Math.random() * options.length)];
+      if (move) g.x += move[0], g.y += move[1];
+    } else if (g.iq === 3 || g.iq === 4) {
+      options.sort((a, b) => {
+        const da = Math.hypot(g.x + a[0] - pacman.x, g.y + a[1] - pacman.y);
+        const db = Math.hypot(g.x + b[0] - pacman.x, g.y + b[1] - pacman.y);
+        return da - db;
+      });
+      const move = options[0];
+      if (move) g.x += move[0], g.y += move[1];
+    } else if (g.iq === 5) {
+      const move = findNextStepBFS(g.x, g.y, pacman.x, pacman.y);
+      if (move) g.x += move[0], g.y += move[1];
+    }
+  }
+}
+
+
+
+
+    function eatPellets() {
+      for (let p of pellets) {
+        if (!p.eaten && Math.abs(pacman.px - p.x) < 0.5 && Math.abs(pacman.py - p.y) < 0.5) {
+          p.eaten = true;
+          score += 10;
+          scoreSpan.textContent = score;
+        }
+      }
+
+      for (let p of powerPellets) {
+        if (p.active && Math.abs(pacman.px - p.x) < 0.5 && Math.abs(pacman.py - p.y) < 0.5) {
+          p.active = false;
+          powerTimer = 420; // 7 seconds at 60fps
+        }
+      }
+
+      if (pellets.every(p => p.eaten)) {
+        level++;
+        levelSpan.textContent = level;
+        setTimeout(initGame, 1000);
+      }
+    }
+
+    function checkCollision() {
+      for (let g of activeGhosts) {
+        if (Math.hypot(pacman.px - g.px, pacman.py - g.py) < 0.5) {
+          if (powerTimer > 0 && !g.eaten) {
+            g.eaten = true;
+            setTimeout(() => {
+              g.x = 19; g.y = 8;
+              g.eaten = false;
+            }, 2000);
+            score += 200;
+            scoreSpan.textContent = score;
+          } else if (!g.eaten && !justHit && powerTimer === 0) {
+            lives--;
+            livesSpan.textContent = lives;
+            justHit = true;
+            if (lives <= 0) {
+              gameOver = true;
+            } else {
+              setTimeout(() => {
+                justHit = false;
+                pacman.x = 1; pacman.y = 1;
+                pacman.px = 1; pacman.py = 1;
+                for (let g of allGhosts) {
+                  g.x = 19; g.y = 8;
+                  g.px = 19; g.py = 8;
+                  g.eaten = false;
+                }
+              }, 1000);
+            }
+          }
+        }
+      }
+    }
+
+    function applyPortals() {
+      const cols = maze[0].length;
+      if (pacman.x < 0) pacman.x = cols - 1, pacman.px = pacman.x;
+      if (pacman.x >= cols) pacman.x = 0, pacman.px = pacman.x;
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawMaze();
+      drawPellets();
+      drawPacman();
+      for (let g of activeGhosts) drawGhost(g);
+      if (gameOver) {
+        ctx.fillStyle = 'white';
+        ctx.font = '36px monospace';
+        ctx.fillText('GAME OVER', canvas.width / 2 - 100, canvas.height / 2);
+      }
+    }
+    function scorePath(x, y, depth) {
+  if (depth <= 0 || isWall(x, y)) return Math.hypot(x - pacman.x, y - pacman.y);
+
+  const dirs = [[1,0], [-1,0], [0,1], [0,-1]];
+  let min = Infinity;
+
+  for (let [dx, dy] of dirs) {
+    const newX = x + dx, newY = y + dy;
+    if (isWall(newX, newY)) continue;
+    const score = scorePath(newX, newY, depth - 1);
+    if (score < min) min = score;
+  }
+
+  return min;
+}
+
+
+    function loop() {
+      frame++;
+      if (!gameOver) {
+        movePacman();
+        applyPortals();
+        updateGhosts();
+        updatePositions();
+        checkCollision();
+        eatPellets();
+        if (powerTimer > 0) powerTimer--;
+      }
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    document.addEventListener('keydown', e => {
+      const dirs = {
+        ArrowRight: [1, 0],
+        ArrowLeft: [-1, 0],
+        ArrowUp: [0, -1],
+        ArrowDown: [0, 1]
+      };
+      if (dirs[e.key]) pacman.nextDir = dirs[e.key];
+    });
+function findNextStepBFS(startX, startY, targetX, targetY) {
+  const queue = [[startX, startY]];
+  const visited = {};
+  const cameFrom = {};
+
+  const key = (x, y) => `${x},${y}`;
+  visited[key(startX, startY)] = true;
+
+  const dirs = [[1,0], [-1,0], [0,1], [0,-1]];
+
+  while (queue.length) {
+    const [x, y] = queue.shift();
+
+    if (x === targetX && y === targetY) {
+      let path = [];
+      let cur = key(x, y);
+      while (cameFrom[cur]) {
+        path.unshift(cur);
+        cur = cameFrom[cur];
+      }
+      if (path.length) {
+        const [nextX, nextY] = path[0].split(',').map(Number);
+        return [nextX - startX, nextY - startY];
+      }
+      break;
+    }
+
+    for (let [dx, dy] of dirs) {
+      const nx = x + dx, ny = y + dy;
+      const nKey = key(nx, ny);
+      if (!visited[nKey] && !isWall(nx, ny)) {
+        queue.push([nx, ny]);
+        visited[nKey] = true;
+        cameFrom[nKey] = key(x, y);
+      }
+    }
+  }
+
+  return null; // no path found
+}
+
+    initGame();
+    loop();
+  </script>
+</body>
+</html>
+
